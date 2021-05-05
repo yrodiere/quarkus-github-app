@@ -1,39 +1,45 @@
 package io.quarkiverse.githubapp.testing.internal;
 
+import java.io.Serializable;
 import java.lang.reflect.Array;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.function.Consumer;
 
+import org.mockito.Answers;
 import org.mockito.MockSettings;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
-import org.mockito.listeners.InvocationListener;
-import org.mockito.listeners.MethodInvocationReport;
 import org.mockito.stubbing.Answer;
 
 final class DefaultableMocking<M> {
 
-    static <M> DefaultableMocking<M> create(Class<M> clazz, Object id, Consumer<MockSettings> mockSettingsContributor) {
-        StubDetectingInvocationListener listener = new StubDetectingInvocationListener();
-        MockSettings mockSettings = Mockito.withSettings().name(clazz.getSimpleName() + "#" + id)
+    static <M> DefaultableMocking<M> create(Class<M> clazz, Object id, Consumer<MockSettings> mockSettingsContributor,
+            DefaultMockAnswer defaultMockAnswer) {
+        String name = clazz.getSimpleName() + "#" + id;
+        MockSettings mockSettings = Mockito.withSettings().name(name)
                 .withoutAnnotations()
-                .invocationListeners(listener);
+                .defaultAnswer(defaultMockAnswer);
         mockSettingsContributor.accept(mockSettings);
         M mock = Mockito.mock(clazz, mockSettings);
-        return new DefaultableMocking<>(mock, listener);
+        return new DefaultableMocking<>(mock, name);
     }
 
     private final M mock;
-    private final StubDetectingInvocationListener listener;
+    private final String name;
 
-    private DefaultableMocking(M mock, StubDetectingInvocationListener listener) {
+    private DefaultableMocking(M mock, String name) {
         this.mock = mock;
-        this.listener = listener;
+        this.name = name;
     }
 
     M mock() {
         return mock;
+    }
+
+    String name() {
+        return name;
     }
 
     Object callMock(InvocationOnMock invocation) throws Throwable {
@@ -41,18 +47,28 @@ final class DefaultableMocking<M> {
     }
 
     Object callMockOrDefault(InvocationOnMock invocation, Answer<?> defaultAnswer) throws Throwable {
-        Object result = callMock(invocation);
-        if (listener.lastInvocationWasMocked) {
-            return result;
-        } else {
+        try {
+            return callMock(invocation);
+        } catch (MissingMockBehaviorError error) {
             call(Mockito.verify(mock, Mockito.atLeastOnce()), invocation);
             return defaultAnswer.answer(invocation);
         }
     }
 
-    Object call(Object self, InvocationOnMock invocation) throws Throwable {
+    Object call(Object self, InvocationOnMock invocation) throws IllegalAccessException, InvocationTargetException {
         Object[] argumentsForJava = unexpandArguments(invocation);
-        return invocation.getMethod().invoke(self, argumentsForJava);
+        try {
+            return invocation.getMethod().invoke(self, argumentsForJava);
+        } catch (InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            } else if (cause instanceof Error) {
+                throw (Error) cause;
+            } else {
+                throw e;
+            }
+        }
     }
 
     // invocation.getArguments() expands varargs, so we need to put them back into an array
@@ -77,12 +93,17 @@ final class DefaultableMocking<M> {
         return unexpandedArguments;
     }
 
-    private static class StubDetectingInvocationListener implements InvocationListener {
-        private boolean lastInvocationWasMocked = false;
+    static class DefaultMockAnswer implements Answer<Object>, Serializable {
+        public boolean allowMockConfigurationAndVerifying = true;
+        private final Answer<Object> answerWhenConfiguringAndVerifying = Answers.RETURNS_DEFAULTS;
 
         @Override
-        public void reportInvocation(MethodInvocationReport methodInvocationReport) {
-            lastInvocationWasMocked = methodInvocationReport.getLocationOfStubbing() != null;
+        public Object answer(InvocationOnMock invocation) throws Throwable {
+            if (allowMockConfigurationAndVerifying) {
+                return answerWhenConfiguringAndVerifying.answer(invocation);
+            } else {
+                throw new MissingMockBehaviorError(invocation);
+            }
         }
     }
 }

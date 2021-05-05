@@ -1,6 +1,7 @@
 package io.quarkiverse.githubapp.testing.internal;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.UUID;
@@ -93,7 +94,13 @@ final class EventSenderOptionsImpl implements EventSenderOptions {
         testingContext.errorHandler.captured = null;
         AssertionError callAssertionError = null;
         try {
-            call.execute().close();
+            testingContext.mocks.withMocksEnabled(() -> {
+                try {
+                    call.execute().close();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
         } catch (Throwable e) {
             callAssertionError = new AssertionError("The HTTP call threw an exception: " + e.getMessage(), e);
         }

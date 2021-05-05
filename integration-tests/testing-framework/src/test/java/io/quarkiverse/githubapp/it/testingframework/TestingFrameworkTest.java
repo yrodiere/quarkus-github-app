@@ -5,6 +5,7 @@ import static io.quarkiverse.githubapp.testing.GitHubAppTesting.when;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 
@@ -42,7 +43,13 @@ public class TestingFrameworkTest {
 
     @Test
     void ghObjectVerify() {
-        ThrowingCallable assertion = () -> when().payloadFromClasspath("/issue-opened.json")
+        ThrowingCallable assertion = () -> given()
+                .github(mocks -> {
+                    Mockito.doNothing()
+                            .when(mocks.issue(750705278)).addLabels(any(String.class));
+                    Mockito.when(mocks.issue(750705278).getBody()).thenReturn("someValue");
+                })
+                .when().payloadFromClasspath("/issue-opened.json")
                 .event(GHEvent.ISSUES)
                 .then().github(mocks -> {
                     verify(mocks.issue(750705278))
@@ -68,9 +75,13 @@ public class TestingFrameworkTest {
 
     @Test
     void configFileMocking() {
-        ThrowingCallable assertion = () -> given().github(mocks -> mocks.configFileFromString(
-                "config.yml",
-                "someProperty: valueFromConfigFile"))
+        ThrowingCallable assertion = () -> given()
+                .github(mocks -> {
+                    mocks.configFileFromString("config.yml",
+                            "someProperty: valueFromConfigFile");
+                    Mockito.doNothing()
+                            .when(mocks.issue(750705278)).addLabels(any(String.class));
+                })
                 .when().payloadFromClasspath("/issue-opened.json")
                 .event(GHEvent.ISSUES)
                 .then().github(mocks -> {
@@ -109,9 +120,15 @@ public class TestingFrameworkTest {
                             .addLabels("someValue");
                     verifyNoMoreInteractions(mocks.ghObjects());
                 }))
-                .hasMessageContaining("The event handler threw an exception: null")
-                .hasStackTraceContaining("at org.kohsuke.github.GHIssue.getComments")
-                .hasStackTraceContaining("at io.quarkiverse.githubapp.it.testingframework.IssueEventListener.onEvent");
+                        .hasMessageContaining(
+                                "Mocked behavior is missing for GHIssue#750705278.getComments();."
+                                        + " Use the following syntax to mock the behavior of GitHub objects:\n"
+                                        + "    given()\n"
+                                        + "        .github(mocks -> {\n"
+                                        + "            Mockito.when(mocks.ghObject(GHIssue.class, <the ID of the GHObject>).getComments())\n"
+                                        + "                    .thenReturn([...]);\n"
+                                        + "        })\n"
+                                        + "        .when(). [...]");
     }
 
 }

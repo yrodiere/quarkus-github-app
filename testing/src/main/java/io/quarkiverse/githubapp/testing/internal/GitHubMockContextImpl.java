@@ -34,6 +34,8 @@ import io.quarkiverse.githubapp.testing.dsl.GitHubMockVerificationContext;
 
 public final class GitHubMockContextImpl implements GitHubMockContext, GitHubMockSetupContext, GitHubMockVerificationContext {
 
+    private final DefaultableMocking.DefaultMockAnswer defaultMockAnswer;
+
     final GitHubService service;
     final GitHubFileDownloader fileDownloader;
 
@@ -46,13 +48,25 @@ public final class GitHubMockContextImpl implements GitHubMockContext, GitHubMoc
     private final Map<Class<?>, MockMap<Long, ? extends GHObject>> nonRepositoryGHObjectMockMaps = new LinkedHashMap<>();
 
     GitHubMockContextImpl() {
+        defaultMockAnswer = new DefaultableMocking.DefaultMockAnswer();
         fileDownloader = Mockito.mock(GitHubFileDownloader.class);
         service = Mockito.mock(GitHubService.class);
+    }
+
+    void withMocksEnabled(Runnable runnable) {
+        defaultMockAnswer.allowMockConfigurationAndVerifying = false;
+        try {
+            runnable.run();
+        } finally {
+            defaultMockAnswer.allowMockConfigurationAndVerifying = true;
+        }
     }
 
     @Override
     public GitHub client(long id) {
         return clients.getOrCreate(id, newClient -> {
+            boolean oldAllowMockConfiguration = defaultMockAnswer.allowMockConfigurationAndVerifying;
+            defaultMockAnswer.allowMockConfigurationAndVerifying = true;
             try {
                 when(newClient.isOffline()).thenReturn(true);
                 when(newClient.getRepository(any()))
@@ -65,6 +79,8 @@ public final class GitHubMockContextImpl implements GitHubMockContext, GitHubMoc
                 });
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
+            } finally {
+                defaultMockAnswer.allowMockConfigurationAndVerifying = oldAllowMockConfiguration;
             }
         })
                 .mock();
@@ -123,6 +139,7 @@ public final class GitHubMockContextImpl implements GitHubMockContext, GitHubMoc
     }
 
     void reset() {
+        defaultMockAnswer.allowMockConfigurationAndVerifying = true;
         Mockito.reset(service);
         Mockito.reset(fileDownloader);
         for (MockMap<?, ?> mockMap : allMockMaps) {
@@ -185,7 +202,8 @@ public final class GitHubMockContextImpl implements GitHubMockContext, GitHubMoc
         }
 
         private DefaultableMocking<T> create(Object id) {
-            return DefaultableMocking.create(clazz, id, mockSettingsContributor);
+            return DefaultableMocking.create(clazz, id, mockSettingsContributor, defaultMockAnswer);
         }
     }
+
 }
